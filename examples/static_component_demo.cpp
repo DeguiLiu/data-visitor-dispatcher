@@ -1,10 +1,9 @@
 /**
- * @file mccc_static_demo.cpp
- * @brief Zero-overhead CRTP version of the DataVisitor/DataDispatcher demo.
+ * @file static_component_demo.cpp
+ * @brief Zero-overhead CRTP compile-time dispatch demo.
  *
- * Uses StaticComponent for compile-time dispatch:
- * - No virtual destructor
- * - No shared_ptr / weak_ptr
+ * Uses StaticComponent for compile-time handler binding:
+ * - No virtual destructor, no shared_ptr / weak_ptr
  * - No FixedFunction / callback table lookup
  * - Handler calls are inlineable by the compiler
  *
@@ -48,10 +47,12 @@ using DemoBus = mccc::AsyncBus<DemoPayload>;
 // LoggingVisitor (CRTP: Handle method detected at compile time)
 // ---------------------------------------------------------------------------
 
-class LoggingVisitor : public mccc::StaticComponent<LoggingVisitor, DemoPayload> {
+class LoggingVisitor
+    : public mccc::StaticComponent<LoggingVisitor, DemoPayload> {
  public:
   void Handle(const SensorData& data) noexcept {
-    LOG_INFO("[LoggingVisitor] id=%d content=\"%s\"", data.id, data.content.c_str());
+    LOG_INFO("[LoggingVisitor] id=%d content=\"%s\"",
+             data.id, data.content.c_str());
   }
 };
 
@@ -59,10 +60,12 @@ class LoggingVisitor : public mccc::StaticComponent<LoggingVisitor, DemoPayload>
 // ProcessingVisitor (CRTP: Handle method detected at compile time)
 // ---------------------------------------------------------------------------
 
-class ProcessingVisitor : public mccc::StaticComponent<ProcessingVisitor, DemoPayload> {
+class ProcessingVisitor
+    : public mccc::StaticComponent<ProcessingVisitor, DemoPayload> {
  public:
   void Handle(const SensorData& data) noexcept {
-    LOG_INFO("[ProcessingVisitor] id=%d length=%u", data.id, data.content.size());
+    LOG_INFO("[ProcessingVisitor] id=%d length=%u",
+             data.id, data.content.size());
   }
 };
 
@@ -96,7 +99,7 @@ class CombinedVisitor {
 
 int main() {
   LOG_INFO("========================================");
-  LOG_INFO("   MCCC StaticComponent Demo");
+  LOG_INFO("   StaticComponent Demo");
   LOG_INFO("   (Zero-overhead compile-time dispatch)");
   LOG_INFO("========================================");
 
@@ -124,7 +127,7 @@ int main() {
   LOG_INFO("");
   LOG_INFO("=== Publishing messages ===");
 
-  DemoBus::Instance().Publish(SensorData{1, "Hello, CyberRT!"}, /*sender_id=*/1U);
+  DemoBus::Instance().Publish(SensorData{1, "Hello, World!"}, /*sender_id=*/1U);
   DemoBus::Instance().Publish(SensorData{2, "Another data packet."}, /*sender_id=*/1U);
   DemoBus::Instance().Publish(SensorData{3, "Zero-overhead dispatch."}, /*sender_id=*/1U);
 

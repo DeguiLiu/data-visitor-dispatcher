@@ -1,70 +1,32 @@
-## CyberRT DataVisitor/DataDispatcher: 原始实现 vs MCCC 重写
+## Data Visitor Dispatcher
 
-CyberRT 风格的 DataVisitor/DataDispatcher 数据分发模式，演示如何用 [mccc-bus](https://gitee.com/liudegui/mccc-bus) 无锁消息总线替代传统的 mutex + thread 方案。
+基于无锁 MPSC 消息总线的观察者模式示例，演示嵌入式场景下的数据分发架构。
 
-### 文件说明
+### 特性
 
-| 文件 | 说明 |
-|------|------|
-| `main.cpp` | 原始实现 (mutex + per-visitor thread + std::function) |
-| `data.h` / `data_visitor.h` / `data_dispatcher.h` / `receiver.h` | 原始实现的头文件 |
-| `logging_visitor.h` / `processing_visitor.h` | 原始实现的具体 visitor |
-| `mccc_demo.cpp` | **MCCC 重写: Component 动态订阅版** |
-| `mccc_static_demo.cpp` | **MCCC 重写: StaticComponent 零开销版** |
-| `CMakeLists.txt` | CMake 构建配置 |
+- **无锁并发**: lock-free CAS (MPSC) 多生产者无锁并发发布
+- **零堆分配**: Ring Buffer 嵌入消息存储，`FixedString<N>` 栈缓冲替代 `std::string`
+- **单 worker 线程**: `ProcessBatch()` 一次遍历处理所有消息，线程数 O(1)
+- **编译期类型路由**: `std::variant` + `Subscribe<T>` 类型安全订阅
+- **内置背压**: 定长环形缓冲，生产者快于消费者时自动丢弃最旧消息
 
-### 问题: 原始实现的架构缺陷
+### 两种实现
 
-原始实现用 ~200 行代码模拟 CyberRT 的 DataVisitor/DataDispatcher 模式，但存在以下工程问题:
-
-| 问题 | 严重度 | 说明 |
-|------|--------|------|
-| 全局 mutex 瓶颈 | 性能 | DataDispatcher 每次 Dispatch 都锁 mutex，N 个生产者串行化 |
-| 每 visitor 一个线程 | 资源浪费 | 10 个 visitor = 10 个线程，CyberRT 原版用协程池 |
-| `std::function` 堆分配 | 性能 | 每个回调都可能触发 heap allocation |
-| `shared_ptr<Data>` 满天飞 | 性能 | 每条消息一次 `make_shared`，引用计数原子操作 |
-| `std::queue` 无界 | 安全隐患 | 生产者快于消费者时无限增长，无背压机制 |
-| 无 topic 路由 | 功能缺失 | 所有 visitor 收到所有消息，无法按类型订阅 |
-| 无生命周期管理 | 正确性 | visitor 析构顺序不当可能导致线程 join 死锁 |
-
-### 解决方案: MCCC 重写
-
-MCCC (Message-driven Component Communication for C++) 是一个 C++17 header-only 无锁消息总线:
-
-- lock-free MPSC Ring Buffer，零 mutex
-- `FixedFunction` SBO 回调，零堆分配
-- 定长环形缓冲，内置背压
-- 编译期类型安全的 `std::variant` 消息路由
-- Component 生命周期自动管理
-
-提供两种重写版本:
-
-#### 1. Component 版 (`mccc_demo.cpp`) -- 动态订阅
-
-- 支持运行时动态注册/注销 visitor
-- `shared_ptr` release 自动取消订阅
-- 完整复现原始 demo 的"移除 LoggingVisitor"行为
-
-#### 2. StaticComponent 版 (`mccc_static_demo.cpp`) -- 零开销
-
-- CRTP 编译期分发，无间接调用
-- 栈分配 visitor，零 shared_ptr
-- Handler 可被编译器内联
+| 版本 | 文件 | 订阅方式 | 分发机制 | 适用场景 |
+|------|------|----------|----------|----------|
+| Component 版 | `examples/component_demo.cpp` | 运行时动态 | `FixedFunction` SBO 回调 | 需要动态增删订阅者 |
+| StaticComponent 版 | `examples/static_component_demo.cpp` | 编译期固定 | CRTP `Handle()` 内联 | 订阅者集合固定，追求零开销 |
 
 ### 技术对比
 
-| 维度 | Original | MCCC Component | MCCC StaticComponent |
-|------|----------|----------------|----------------------|
-| 并发同步 | `std::mutex` | lock-free CAS | lock-free CAS |
-| 线程模型 | 每 visitor 独立线程 | 单 worker 线程 | 单 worker 线程 |
-| 回调存储 | `std::function` (堆分配) | `FixedFunction` SBO (零堆) | 编译期内联 |
-| 消息队列 | `std::queue` (无界, OOM) | Ring Buffer (定长, 背压) | Ring Buffer (定长, 背压) |
-| 消息传递 | `shared_ptr<Data>` (堆分配) | Ring Buffer 嵌入 (零拷贝) | Ring Buffer 嵌入 (零拷贝) |
-| 字符串类型 | `std::string` (堆分配) | `FixedString<N>` (栈内联) | `FixedString<N>` (栈内联) |
-| 生命周期 | 手动 register/unregister | `weak_ptr` 自动管理 | 栈 RAII |
-| 动态订阅 | 支持 | 支持 | 不支持 (编译期固定) |
-| 统计信息 | 无 | 内置 (发布/处理/丢弃) | 内置 |
-| 代码量 | ~200 行 / 7 文件 | ~110 行 / 1 文件 | ~95 行 / 1 文件 |
+| 维度 | Component 版 | StaticComponent 版 |
+|------|-------------|-------------------|
+| 代码量 | ~110 行 / 1 文件 | ~95 行 / 1 文件 |
+| 堆分配 (每条消息) | 0 次 | 0 次 |
+| 线程数 | 2 (worker + main) | 2 (worker + main) |
+| 动态增删订阅者 | 支持 | 不支持 |
+| 间接调用 | `FixedFunction` (SBO，非堆) | 无 (可内联) |
+| 订阅者存储 | `shared_ptr` 堆分配 | 栈分配 |
 
 ### 构建与运行
 
@@ -78,8 +40,21 @@ cmake .. -DMCCC_DIR=/tmp/mccc-bus
 make -j$(nproc)
 
 # 运行
-./mccc_demo            # Component 版 (动态订阅)
-./mccc_static_demo     # StaticComponent 版 (零开销)
+./examples/component_demo          # Component 版 (动态订阅)
+./examples/static_component_demo   # StaticComponent 版 (零开销)
+```
+
+### 目录结构
+
+```
+data-visitor-dispatcher/
+├── CMakeLists.txt
+├── LICENSE
+├── README.md
+└── examples/
+    ├── CMakeLists.txt
+    ├── component_demo.cpp
+    └── static_component_demo.cpp
 ```
 
 ### 相关项目
@@ -87,3 +62,7 @@ make -j$(nproc)
 - [mccc-bus](https://gitee.com/liudegui/mccc-bus): C++17 header-only 无锁消息总线
 - [newosp](https://github.com/DeguiLiu/newosp): 工业级嵌入式 C++17 基础设施库 (基于 mccc-bus)
 - 技术文章: [嵌入式 C++ 技术专栏](https://deguiliu.github.io/embedded-cpp-articles/)
+
+### License
+
+MIT

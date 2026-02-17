@@ -1,15 +1,12 @@
 /**
- * @file mccc_demo.cpp
- * @brief CyberRT DataVisitor/DataDispatcher rewrite using MCCC.
+ * @file component_demo.cpp
+ * @brief Component-based data distribution with dynamic subscribe/unsubscribe.
  *
- * Original: mutex + vector + per-visitor thread + std::function + shared_ptr
- * MCCC:     lock-free MPSC bus + Component lifecycle + FixedFunction SBO
- *
- * Demonstrates:
+ * Lock-free MPSC bus + Component lifecycle + FixedFunction SBO callback.
  * - Zero heap allocation message passing (Ring Buffer embedded)
  * - Component-based subscribe with automatic lifecycle management
  * - Dynamic register/unregister of visitors at runtime
- * - Single consumer thread (ProcessBatch) replaces per-visitor threads
+ * - Single consumer thread processes all subscriptions
  */
 
 #ifndef LOG_LEVEL
@@ -26,7 +23,7 @@
 #include <mccc/component.hpp>
 
 // ---------------------------------------------------------------------------
-// Message types (replaces Data struct)
+// Message types
 // ---------------------------------------------------------------------------
 
 struct SensorData {
@@ -45,10 +42,9 @@ struct SensorData {
 using DemoPayload = std::variant<SensorData>;
 using DemoBus = mccc::AsyncBus<DemoPayload>;
 using DemoComponent = mccc::Component<DemoPayload>;
-using DemoEnvelope = mccc::MessageEnvelope<DemoPayload>;
 
 // ---------------------------------------------------------------------------
-// LoggingVisitor (replaces original LoggingVisitor + DataVisitor thread)
+// LoggingVisitor
 // ---------------------------------------------------------------------------
 
 class LoggingVisitor : public DemoComponent {
@@ -73,7 +69,7 @@ class LoggingVisitor : public DemoComponent {
 };
 
 // ---------------------------------------------------------------------------
-// ProcessingVisitor (replaces original ProcessingVisitor + DataVisitor thread)
+// ProcessingVisitor
 // ---------------------------------------------------------------------------
 
 class ProcessingVisitor : public DemoComponent {
@@ -98,7 +94,7 @@ class ProcessingVisitor : public DemoComponent {
 };
 
 // ---------------------------------------------------------------------------
-// Receiver (message source, publishes to the bus)
+// Receiver (message source)
 // ---------------------------------------------------------------------------
 
 class Receiver {
@@ -120,12 +116,12 @@ class Receiver {
 
 int main() {
   LOG_INFO("========================================");
-  LOG_INFO("   MCCC DataVisitor/Dispatcher Demo");
+  LOG_INFO("   Component Demo (Dynamic Subscribe)");
   LOG_INFO("========================================");
 
   std::atomic<bool> stop_worker{false};
 
-  // Single consumer thread (replaces N per-visitor threads)
+  // Single consumer thread
   std::thread worker([&stop_worker]() noexcept {
     while (!stop_worker.load(std::memory_order_acquire)) {
       uint32_t processed = DemoBus::Instance().ProcessBatch();
@@ -140,31 +136,29 @@ int main() {
   auto logger = LoggingVisitor::Create();
   auto processor = ProcessingVisitor::Create();
 
-  // Create receiver
   Receiver receiver(/*sender_id=*/1U);
 
-  // Simulate receiving messages
+  // Publish messages
   LOG_INFO("");
   LOG_INFO("=== Receiving message #1 ===");
-  receiver.ReceiveMessage(1, "Hello, CyberRT!");
+  receiver.ReceiveMessage(1, "Hello, World!");
   LOG_INFO("=== Receiving message #2 ===");
   receiver.ReceiveMessage(2, "Another data packet.");
 
-  // Wait for processing
   std::this_thread::sleep_for(std::chrono::milliseconds(200));
 
-  // Unregister LoggingVisitor (shared_ptr release triggers Unsubscribe)
+  // Unregister LoggingVisitor (shared_ptr release triggers automatic unsubscribe)
   LOG_INFO("");
   LOG_INFO("=== Removing LoggingVisitor ===");
   logger.reset();
 
-  // Send another message (only ProcessingVisitor receives it)
+  // Only ProcessingVisitor receives this message
   LOG_INFO("=== Receiving message #3 ===");
   receiver.ReceiveMessage(3, "Data after removing logger.");
 
   std::this_thread::sleep_for(std::chrono::milliseconds(200));
 
-  // Show statistics
+  // Statistics
   auto stats = DemoBus::Instance().GetStatistics();
   LOG_INFO("");
   LOG_INFO("Statistics:");
@@ -172,7 +166,6 @@ int main() {
   LOG_INFO("  Processed: %lu", stats.messages_processed);
   LOG_INFO("  Dropped:   %lu", stats.messages_dropped);
 
-  // Cleanup
   LOG_INFO("");
   LOG_INFO("=== Demo completed ===");
   stop_worker.store(true, std::memory_order_release);
