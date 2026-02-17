@@ -30,13 +30,12 @@
 
 ### 构建与运行
 
-```bash
-# 依赖: mccc-bus 源码
-git clone git@gitee.com:liudegui/mccc-bus.git /tmp/mccc-bus
+依赖 [mccc-bus](https://gitee.com/liudegui/mccc-bus) 通过 CMake FetchContent 自动下载，无需手动克隆。
 
-# 构建
+```bash
+# 构建 (mccc-bus 自动下载)
 mkdir build && cd build
-cmake .. -DMCCC_DIR=/tmp/mccc-bus
+cmake ..
 make -j$(nproc)
 
 # 运行
